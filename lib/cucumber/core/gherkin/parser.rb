@@ -1,8 +1,5 @@
 # frozen_string_literal: true
-require 'gherkin/parser'
-require 'gherkin/token_scanner'
-require 'gherkin/errors'
-require 'gherkin/pickles/compiler'
+require 'gherkin/gherkin'
 
 module Cucumber
   module Core
@@ -19,18 +16,28 @@ module Cucumber
         end
 
         def document(document)
-          parser            = ::Gherkin::Parser.new
-          scanner           = ::Gherkin::TokenScanner.new(document.body)
-          token_matcher     = ::Gherkin::TokenMatcher.new(document.language)
-          compiler          = ::Gherkin::Pickles::Compiler.new
+          parser = ::Gherkin::Gherkin.new(
+            [],               # do not pass paths
+            false,            # no source messages
+            true,             # ast messages
+            true,             # pickles messages
+            document.language # the default dialect
+          )
 
           begin
-            result = parser.parse(scanner, token_matcher)
-            event_bus.gherkin_source_parsed(document.uri, result.dup)
-            pickles = compiler.compile(result)
-
-            receiver.pickles(pickles, document.uri)
-          rescue *PARSER_ERRORS => e
+            messages = parser.parse(document.uri, document.body)
+            messages.each do |message|
+              if !message.gherkinDocument.nil?
+                event_bus.gherkin_source_parsed(message.gherkinDocument.to_hash)
+              elsif !message.pickle.nil?
+                receiver.pickle(message.pickle.to_hash)
+              elsif !message.attachment.nil?
+                raise message.attachment.data
+              else
+                raise "Unknown message: #{message.to_hash}"
+              end
+            end
+          rescue RuntimeError => e
             raise Core::Gherkin::ParseError.new("#{document.uri}: #{e.message}")
           end
         end
@@ -39,11 +46,6 @@ module Cucumber
           receiver.done
           self
         end
-
-        private
-
-        PARSER_ERRORS = ::Gherkin::ParserError
-
       end
     end
   end
